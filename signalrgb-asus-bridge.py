@@ -168,15 +168,13 @@ KEY_LED_MAP = [
 class HidRawAuraController:
     REPORT_SIZE = 64
     HIDIOCSFEATURE = 0xC0004806 | ((REPORT_SIZE & 0x3FFF) << 16)
-    ZERO_TRAILING_BYTES = bytes(REPORT_SIZE - 9)
 
     def __init__(self, hidraw_path, product_id):
         self._path = hidraw_path or self._detect_hidraw(product_id)
         self._fd = os.open(self._path, os.O_RDWR)
         self._keyboard_packets = self._make_keyboard_packets()
         self._lightbar_packet = self._make_lightbar_packet()
-        self._last_keyboard_reports = [None] * len(self._keyboard_packets)
-        self._last_lightbar_report = None
+        self._last_colors = [None] * (KEYBOARD_LED_COUNT + LIGHTBAR_LED_COUNT)
         self._set_feature(bytearray([0x5d, 0xbc]))
 
     @staticmethod
@@ -228,54 +226,66 @@ class HidRawAuraController:
             lightbar[off + 1] = g
             lightbar[off + 2] = b
         self._set_feature(lightbar)
+        # Static write bypasses the per-key buffers; invalidate the diff cache
+        # so the next per-key frame fully repaints the rows it touches.
+        self._last_colors = [None] * (KEYBOARD_LED_COUNT + LIGHTBAR_LED_COUNT)
+        for pkt in self._keyboard_packets:
+            for off in range(9, self.REPORT_SIZE):
+                pkt[off] = 0
+        for off in range(9, self.REPORT_SIZE):
+            self._lightbar_packet[off] = 0
 
     def set_per_key_rgb(self, colors):
         packets = self._keyboard_packets
-        for pkt in packets:
-            pkt[9:] = self.ZERO_TRAILING_BYTES
+        last_colors = self._last_colors
+        dirty_rows = 0
 
         num_keys = min(len(colors), len(KEY_LED_MAP))
         for i in range(num_keys):
+            new_color = colors[i]
+            if last_colors[i] == new_color:
+                continue
+            last_colors[i] = new_color
             entry = KEY_LED_MAP[i]
-            if isinstance(entry, tuple):
+            if entry.__class__ is tuple:
                 indices = entry
             elif entry < 0:
                 continue
             else:
                 indices = (entry,)
-            r, g, b = colors[i]
+            r, g, b = new_color
             for led_idx in indices:
                 row = led_idx >> 4
-                slot = led_idx & 0x0f
                 if row >= 11:
                     continue
-                offset = 9 + slot * 3
-                packets[row][offset] = r
-                packets[row][offset + 1] = g
-                packets[row][offset + 2] = b
+                offset = 9 + (led_idx & 0x0f) * 3
+                pkt = packets[row]
+                pkt[offset] = r
+                pkt[offset + 1] = g
+                pkt[offset + 2] = b
+                dirty_rows |= 1 << row
 
-        for row, pkt in enumerate(packets):
-            report = bytes(pkt)
-            if report != self._last_keyboard_reports[row]:
-                self._set_feature(pkt)
-                self._last_keyboard_reports[row] = report
+        if dirty_rows:
+            for row in range(11):
+                if dirty_rows & (1 << row):
+                    self._set_feature(packets[row])
 
         lightbar = self._lightbar_packet
-        lightbar[9:] = self.ZERO_TRAILING_BYTES
+        lightbar_dirty = False
         for i in range(LIGHTBAR_LED_COUNT):
             color_idx = KEYBOARD_LED_COUNT + i
-            if color_idx < len(colors):
-                r, g, b = colors[color_idx]
-            else:
-                r = g = b = 0
+            new_color = colors[color_idx] if color_idx < len(colors) else (0, 0, 0)
+            if last_colors[color_idx] == new_color:
+                continue
+            last_colors[color_idx] = new_color
             offset = 9 + i * 3
-            lightbar[offset] = r
-            lightbar[offset + 1] = g
-            lightbar[offset + 2] = b
-        lightbar_report = bytes(lightbar)
-        if lightbar_report != self._last_lightbar_report:
+            lightbar[offset] = new_color[0]
+            lightbar[offset + 1] = new_color[1]
+            lightbar[offset + 2] = new_color[2]
+            lightbar_dirty = True
+
+        if lightbar_dirty:
             self._set_feature(lightbar)
-            self._last_lightbar_report = lightbar_report
 
     def _make_keyboard_packets(self):
         packets = []
@@ -369,19 +379,17 @@ def parse_ddp_packet(packet):
 def make_udp_socket(host, port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
+    sock.setblocking(False)
     return sock
 
 
 def recv_latest_packet(sock):
     latest_packet, latest_address = sock.recvfrom(65535)
-    sock.setblocking(False)
     try:
         while True:
             latest_packet, latest_address = sock.recvfrom(65535)
     except BlockingIOError:
         return latest_packet, latest_address
-    finally:
-        sock.setblocking(True)
 
 
 def main():
