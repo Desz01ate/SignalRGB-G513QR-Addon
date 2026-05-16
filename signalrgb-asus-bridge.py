@@ -168,10 +168,13 @@ KEY_LED_MAP = [
 class HidRawAuraController:
     REPORT_SIZE = 64
     HIDIOCSFEATURE = 0xC0004806 | ((REPORT_SIZE & 0x3FFF) << 16)
+    ZERO_TRAILING_BYTES = bytes(REPORT_SIZE - 9)
 
     def __init__(self, hidraw_path, product_id):
         self._path = hidraw_path or self._detect_hidraw(product_id)
         self._fd = os.open(self._path, os.O_RDWR)
+        self._keyboard_packets = self._make_keyboard_packets()
+        self._lightbar_packet = self._make_lightbar_packet()
         self._set_feature(bytearray([0x5d, 0xbc]))
 
     @staticmethod
@@ -225,17 +228,9 @@ class HidRawAuraController:
         self._set_feature(lightbar)
 
     def set_per_key_rgb(self, colors):
-        packets = []
-        for row in range(11):
-            pkt = bytearray(self.REPORT_SIZE)
-            pkt[0] = 0x5d
-            pkt[1] = 0xbc
-            pkt[3] = 0x01
-            pkt[4] = 0x01
-            pkt[5] = 0x01
-            pkt[6] = row << 4
-            pkt[7] = 0x08 if row == 10 else 0x10
-            packets.append(pkt)
+        packets = self._keyboard_packets
+        for pkt in packets:
+            pkt[9:] = self.ZERO_TRAILING_BYTES
 
         num_keys = min(len(colors), len(KEY_LED_MAP))
         for i in range(num_keys):
@@ -260,11 +255,8 @@ class HidRawAuraController:
         for pkt in packets:
             self._set_feature(pkt)
 
-        lightbar = bytearray(self.REPORT_SIZE)
-        lightbar[0] = 0x5d
-        lightbar[1] = 0xbc
-        lightbar[3] = 0x01
-        lightbar[4] = 0x04
+        lightbar = self._lightbar_packet
+        lightbar[9:] = self.ZERO_TRAILING_BYTES
         for i in range(LIGHTBAR_LED_COUNT):
             color_idx = KEYBOARD_LED_COUNT + i
             if color_idx < len(colors):
@@ -276,6 +268,28 @@ class HidRawAuraController:
             lightbar[offset + 1] = g
             lightbar[offset + 2] = b
         self._set_feature(lightbar)
+
+    def _make_keyboard_packets(self):
+        packets = []
+        for row in range(11):
+            pkt = bytearray(self.REPORT_SIZE)
+            pkt[0] = 0x5d
+            pkt[1] = 0xbc
+            pkt[3] = 0x01
+            pkt[4] = 0x01
+            pkt[5] = 0x01
+            pkt[6] = row << 4
+            pkt[7] = 0x08 if row == 10 else 0x10
+            packets.append(pkt)
+        return packets
+
+    def _make_lightbar_packet(self):
+        lightbar = bytearray(self.REPORT_SIZE)
+        lightbar[0] = 0x5d
+        lightbar[1] = 0xbc
+        lightbar[3] = 0x01
+        lightbar[4] = 0x04
+        return lightbar
 
     def close(self):
         if self._fd >= 0:
@@ -350,6 +364,18 @@ def make_udp_socket(host, port):
     return sock
 
 
+def recv_latest_packet(sock):
+    latest_packet, latest_address = sock.recvfrom(65535)
+    sock.setblocking(False)
+    try:
+        while True:
+            latest_packet, latest_address = sock.recvfrom(65535)
+    except BlockingIOError:
+        return latest_packet, latest_address
+    finally:
+        sock.setblocking(True)
+
+
 def main():
     args = parse_args()
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
@@ -393,7 +419,7 @@ def main():
                 continue
 
             active_sock = readable[0]
-            packet, address = active_sock.recvfrom(65535)
+            packet, address = recv_latest_packet(active_sock)
 
             if active_sock is sock:
                 hex_color = parse_signalrgb_packet(packet, prefix)
