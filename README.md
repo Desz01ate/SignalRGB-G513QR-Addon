@@ -1,68 +1,89 @@
 # ASUS G513QR SignalRGB Bridge
 
-SignalRGB network add-on for an ASUS ROG Strix G513QR laptop running the local `signalrgb-asus-bridge.py` daemon.
+SignalRGB add-on and Linux bridge for an ASUS ROG Strix G513QR laptop.
 
-The add-on announces one fixed network controller:
+This repository has two parts:
 
-- IP: `192.168.1.76`
-- Realtime protocol: DDP over UDP `4048`
-- LED model: one averaged color over 83 logical keyboard LEDs
+- `AsusG513QR.js`: the SignalRGB network add-on. It announces a fixed controller at `192.168.1.76` and streams DDP to UDP `4048`.
+- `signalrgb-asus-bridge.py`: the laptop daemon. It receives DDP/WLED packets and writes them directly to the ASUS hidraw device.
 
-Install in SignalRGB through **Settings > Add-ons > Add Git Repo** after uploading this repository to GitHub or GitLab.
+## SignalRGB Add-on
+
+The add-on currently exposes:
+
+- Lighting modes: `Canvas` and `Forced`
+- Forced color
+- Shutdown color
+
+Behavior:
+
+- `Canvas` sends per-position colors from SignalRGB.
+- `Forced` fills all 100 logical color positions with one solid color.
+- Shutdown sends the configured shutdown color to every position.
+
+The controller is hardcoded to `192.168.1.76` in `AsusG513QR.js`. If your laptop uses a different address, update that file before publishing the repo.
+
+Install it in SignalRGB through **Settings > Add-ons > Add Git Repo** after pushing this repository to GitHub or GitLab.
 
 Direct install URL format:
 
 ```text
-signalrgb://addon/install?url=https://github.com/YOUR_USER/signalrgb-g513qr-plugin
+signalrgb://addon/install?url=https://github.com/YOUR_USER/YOUR_REPO
 ```
 
-If you use a different laptop IP, update `AsusG513QR.js` before uploading the repository.
+## Laptop Bridge
 
-## Laptop Daemon
+The bridge does not use `asusctl` or D-Bus. It opens the ASUS N-KEY hidraw device directly and sends feature reports.
 
-The bridge now writes directly to `asusd` over D-Bus and does not call `asusctl` per color update.  
-This is intended for the Arch Linux laptop host. This repo includes:
+It listens on:
 
-```text
-signalrgb-asus-bridge.py
-```
+- UDP `4048` for DDP/WLED realtime packets from SignalRGB
+- UDP `21324` for a small `SRASUS1` test protocol
+- HTTP `8095` for WLED-compatible status endpoints
 
-It listens for:
+LED layout handled by the bridge:
 
-- DDP/WLED realtime packets on UDP `4048`
-- a simple test protocol on UDP `21324`
-- WLED-compatible HTTP metadata on the configured HTTP port
+- 97 keyboard LEDs
+- 6 lightbar LEDs
+- 103 physical outputs total
 
-Prerequisites on the laptop:
+SignalRGB sends 100 logical color positions. Several keys map to multiple physical LEDs, which is why the bridge handles more outputs than the SignalRGB canvas exposes.
+
+### Requirements
+
+- Python 3
+- Access to the ASUS hidraw device, usually `0b05:1866`
+
+Running the bridge as `root` is the simplest option. If you want to run it as a regular user, add a udev rule that grants access to the ASUS hidraw node.
+
+### Run It
 
 ```sh
-sudo pacman -S asusctl
+python3 ./signalrgb-asus-bridge.py
 ```
 
-Run the bridge:
-
-```sh
-python3 ./signalrgb-asus-bridge.py --wled-http-port 50000
-```
-
-Default write filtering/timing:
+Default runtime settings:
 
 ```text
+--wled-http-port 8095
 --min-interval 0.05
 --change-threshold 18
 --smoothing 0.35
+--idle-timeout 5.0
 ```
 
-If you still see visual stepping, lower `--change-threshold` and `--smoothing`.  
-If updates are too aggressive, raise `--min-interval`.
-
-If your Aura object path differs from auto-detect, pass it explicitly:
+Useful overrides:
 
 ```sh
-python3 ./signalrgb-asus-bridge.py --aura-object /xyz/ljones/aura/1866_3_3
+python3 ./signalrgb-asus-bridge.py --hidraw /dev/hidraw3
+python3 ./signalrgb-asus-bridge.py --usb-product-id 1866
+python3 ./signalrgb-asus-bridge.py --wled-http-port 80
+python3 ./signalrgb-asus-bridge.py --token YOUR_TOKEN
 ```
 
-## Arch Linux Systemd Install
+Use `--wled-http-port 80` only if you need plain `http://<ip>/json/info` for a WLED integration and can bind a privileged port.
+
+## Systemd Install
 
 Copy the daemon into place:
 
@@ -70,20 +91,18 @@ Copy the daemon into place:
 sudo install -Dm755 ./signalrgb-asus-bridge.py /usr/local/bin/signalrgb-asus-bridge.py
 ```
 
-Create the system service:
+Create the service:
 
 ```sh
 sudo tee /etc/systemd/system/signalrgb-asus-bridge.service >/dev/null <<'EOF'
 [Unit]
-Description=SignalRGB ASUS Aura WLED/DDP bridge
-After=network-online.target asusd.service
+Description=SignalRGB ASUS bridge
+After=network-online.target
 Wants=network-online.target
-Requires=asusd.service
 
 [Service]
 Type=simple
-User=YOUR_LINUX_USER
-ExecStart=/usr/local/bin/signalrgb-asus-bridge.py --wled-http-port 50000 --min-interval 0.05 --change-threshold 18 --smoothing 0.35
+ExecStart=/usr/local/bin/signalrgb-asus-bridge.py
 Restart=on-failure
 RestartSec=2
 
@@ -103,38 +122,19 @@ Check status:
 
 ```sh
 sudo systemctl status signalrgb-asus-bridge.service --no-pager
-curl http://127.0.0.1:50000/json/info
+curl http://127.0.0.1:8095/json/info
 ss -lunp | grep -E '21324|4048'
 ```
 
-Expected log line:
+Expected log lines include:
 
 ```text
-INFO set b5309a target ff00ff from ('192.168.1.50', ...) via ddp
-```
-
-## Optional Port 80 Binding
-
-If a SignalRGB WLED integration requires plain `http://192.168.1.76/json/info`, run the HTTP shim on port `80` instead. Keep `User=YOUR_LINUX_USER`, but grant the service permission to bind a privileged port:
-
-```ini
-[Service]
-Type=simple
-User=YOUR_LINUX_USER
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-ExecStart=/usr/local/bin/signalrgb-asus-bridge.py --wled-http-port 80 --min-interval 0.35 --change-threshold 18 --smoothing 0.35
-Restart=on-failure
-RestartSec=2
-```
-
-Then:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl restart signalrgb-asus-bridge.service
-curl http://127.0.0.1/json/info
+INFO listening on udp://0.0.0.0:21324
+INFO listening for DDP/WLED realtime on udp://0.0.0.0:4048
+INFO serving WLED-compatible HTTP on http://0.0.0.0:8095
+INFO aura backend: hidraw=/dev/hidraw3 (direct, no dbus)
+INFO set ff00ff target ff00ff from ('192.168.1.50', ...) via srgb
+INFO set per-key 100 colors from ('192.168.1.50', ...) via ddp
 ```
 
 ## Desktop Tests
@@ -142,7 +142,7 @@ curl http://127.0.0.1/json/info
 From the Windows desktop:
 
 ```powershell
-Invoke-RestMethod http://192.168.1.76:50000/json/info
+Invoke-RestMethod http://192.168.1.76:8095/json/info
 ```
 
 Minimal DDP test packet from PowerShell:
@@ -151,7 +151,7 @@ Minimal DDP test packet from PowerShell:
 $ip = "192.168.1.76"
 $port = 4048
 $color = "ff00ff"
-$pixels = 83
+$pixels = 103
 
 $payload = [System.Collections.Generic.List[byte]]::new()
 for ($pixel = 0; $pixel -lt $pixels; $pixel++) {
@@ -178,3 +178,9 @@ finally {
     $udp.Close()
 }
 ```
+
+## Notes
+
+- The bridge auto-detects the ASUS hidraw device by USB product ID `1866` unless you pass `--hidraw` explicitly.
+- The `SRASUS1` test protocol on UDP `21324` expects the configured token immediately after the magic prefix, followed by three RGB bytes.
+- `probe_led.py` is a helper for identifying hidraw LED indices when you need to debug the hardware mapping.
