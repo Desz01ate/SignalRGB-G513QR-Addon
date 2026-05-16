@@ -47,7 +47,12 @@ const LED_POSITIONS = [
 	[13, 7], [11, 7], [9, 7], [6, 7], [4, 7], [1, 7]
 ];
 
+const DDP_HEADER_SIZE = 10;
+const DDP_PACKET_SIZE = DDP_HEADER_SIZE + LED_POSITIONS.length * 3;
+const ddpPacket = new Array(DDP_PACKET_SIZE);
 let sequence = 0;
+
+initializeDdpPacket();
 
 export function LedNames() { return LED_NAMES; }
 export function LedPositions() { return LED_POSITIONS; }
@@ -61,8 +66,8 @@ export function Initialize() {
 }
 
 export function Render() {
-	const colors = getPerKeyColors();
-	udp.send(controller.ip, DDP_PORT, makeDdpPacket(colors), false);
+	writePerKeyColors(ddpPacket);
+	udp.send(controller.ip, DDP_PORT, ddpPacket, false);
 }
 
 export function Shutdown() {
@@ -74,21 +79,26 @@ export function Shutdown() {
 	udp.send(controller.ip, DDP_PORT, makeDdpPacket(colors), false);
 }
 
-function getPerKeyColors() {
-	const colors = [];
+function writePerKeyColors(packet) {
+	packet[1] = sequence++ & 0xff;
 	if (LightingMode === "Forced") {
 		const rgb = hexToRgb(forcedColor);
 		for (let i = 0; i < LED_POSITIONS.length; i++) {
-			colors.push(rgb);
+			const offset = DDP_HEADER_SIZE + i * 3;
+			packet[offset] = rgb[0];
+			packet[offset + 1] = rgb[1];
+			packet[offset + 2] = rgb[2];
 		}
 	} else {
 		for (let i = 0; i < LED_POSITIONS.length; i++) {
 			const pos = LED_POSITIONS[i];
 			const color = device.color(pos[0], pos[1]);
-			colors.push([color[0], color[1], color[2]]);
+			const offset = DDP_HEADER_SIZE + i * 3;
+			packet[offset] = color[0];
+			packet[offset + 1] = color[1];
+			packet[offset + 2] = color[2];
 		}
 	}
-	return colors;
 }
 
 function makeDdpPacket(colors) {
@@ -108,6 +118,20 @@ function makeDdpPacket(colors) {
 	}
 
 	return packet;
+}
+
+function initializeDdpPacket() {
+	const payloadLength = LED_POSITIONS.length * 3;
+	ddpPacket[0] = 0x41;
+	ddpPacket[1] = 0x00;
+	ddpPacket[2] = 0x0A;
+	ddpPacket[3] = 0x01;
+	ddpPacket[4] = 0x00;
+	ddpPacket[5] = 0x00;
+	ddpPacket[6] = 0x00;
+	ddpPacket[7] = 0x00;
+	ddpPacket[8] = (payloadLength >> 8) & 0xff;
+	ddpPacket[9] = payloadLength & 0xff;
 }
 
 function hexToRgb(hex) {
