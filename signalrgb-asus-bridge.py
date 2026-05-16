@@ -175,6 +175,8 @@ class HidRawAuraController:
         self._fd = os.open(self._path, os.O_RDWR)
         self._keyboard_packets = self._make_keyboard_packets()
         self._lightbar_packet = self._make_lightbar_packet()
+        self._last_keyboard_reports = [None] * len(self._keyboard_packets)
+        self._last_lightbar_report = None
         self._set_feature(bytearray([0x5d, 0xbc]))
 
     @staticmethod
@@ -252,8 +254,11 @@ class HidRawAuraController:
                 packets[row][offset + 1] = g
                 packets[row][offset + 2] = b
 
-        for pkt in packets:
-            self._set_feature(pkt)
+        for row, pkt in enumerate(packets):
+            report = bytes(pkt)
+            if report != self._last_keyboard_reports[row]:
+                self._set_feature(pkt)
+                self._last_keyboard_reports[row] = report
 
         lightbar = self._lightbar_packet
         lightbar[9:] = self.ZERO_TRAILING_BYTES
@@ -267,7 +272,10 @@ class HidRawAuraController:
             lightbar[offset] = r
             lightbar[offset + 1] = g
             lightbar[offset + 2] = b
-        self._set_feature(lightbar)
+        lightbar_report = bytes(lightbar)
+        if lightbar_report != self._last_lightbar_report:
+            self._set_feature(lightbar)
+            self._last_lightbar_report = lightbar_report
 
     def _make_keyboard_packets(self):
         packets = []
