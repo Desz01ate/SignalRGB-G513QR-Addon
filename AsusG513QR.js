@@ -169,13 +169,13 @@ export function DiscoveryService() {
 		this.controllerCreated = true;
 		service.log("Announcing fixed ASUS G513QR bridge controller.");
 		this.CreateController({
-			id: "asus-g513qr-192.168.1.76",
-			name: "ASUS ROG Strix G513QR",
-			ip: "192.168.1.76",
-			hostname: "arch-supremacy",
-			port: 4048,
-			model: "ROG Strix G513QR",
-			firmwareVersion: "asusd"
+            id: "asus-g513qr-192.168.1.19",
+            name: "ASUS ROG Strix G513QR",
+            ip: "192.168.1.19",
+            hostname: "arch-supremacy",
+            port: 4048,
+            model: "ROG Strix G513QR",
+            firmwareVersion: "asusd"
 		});
 	};
 
