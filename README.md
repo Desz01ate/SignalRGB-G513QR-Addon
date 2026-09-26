@@ -4,7 +4,7 @@ SignalRGB add-on and Linux bridge for an ASUS ROG Strix G513QR laptop.
 
 This repository has two parts:
 
-- `AsusG513QR.js`: the SignalRGB network add-on. It announces a fixed controller at `192.168.1.76` and streams DDP to UDP `4048`.
+- `AsusG513QR.js`: the SignalRGB network add-on. It announces a fixed controller at `192.168.1.19` and streams DDP to UDP `4048`.
 - `signalrgb-asus-bridge.py`: the laptop daemon. It receives DDP/WLED packets and writes them directly to the ASUS hidraw device.
 
 ## SignalRGB Add-on
@@ -21,7 +21,7 @@ Behavior:
 - `Forced` fills all 100 logical color positions with one solid color.
 - Shutdown sends the configured shutdown color to every position.
 
-The controller is hardcoded to `192.168.1.76` in `AsusG513QR.js`. If your laptop uses a different address, update that file before publishing the repo.
+The controller is hardcoded to `192.168.1.19` in `AsusG513QR.js`. If your laptop uses a different address, update that file before publishing the repo.
 
 Install it in SignalRGB through **Settings > Add-ons > Add Git Repo** after pushing this repository to GitHub or GitLab.
 
@@ -142,13 +142,13 @@ INFO set per-key 100 colors from ('192.168.1.50', ...) via ddp
 From the Windows desktop:
 
 ```powershell
-Invoke-RestMethod http://192.168.1.76:8095/json/info
+Invoke-RestMethod http://192.168.1.19:8095/json/info
 ```
 
 Minimal DDP test packet from PowerShell:
 
 ```powershell
-$ip = "192.168.1.76"
+$ip = "192.168.1.19"
 $port = 4048
 $color = "ff00ff"
 $pixels = 103

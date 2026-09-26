@@ -29,7 +29,7 @@ Item {
 
 				Text {
 					color: theme.secondarytextcolor
-					text: "Bridge: 192.168.1.76 UDP 4048"
+                    text: "Bridge: 192.168.1.19 UDP 4048"
 					font.pixelSize: 13
 					font.family: "Montserrat"
 				}
